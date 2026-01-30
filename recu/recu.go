@@ -92,7 +92,7 @@ func Parse(siteUrl string, header map[string]string, jsonLoc, maxRes int) (playL
 	apiUrl := strings.Join(strings.Split(siteUrl, "/")[:3], "/") + "/api/video/" + id + "?token=" + token
 	// request api
 	fmt.Printf("\rGetting Link to Playlist: ")
-	apidata, err := parseDownloadLoop(apiUrl, 10, tools.FormatedHeader(header, apiUrl, 2))
+	apidata, err := parseDownloadLoop(apiUrl, 10, tools.FormatedHeader(header, siteUrl, 2))
 	if err != nil {
 		errorType = "panic"
 		return
