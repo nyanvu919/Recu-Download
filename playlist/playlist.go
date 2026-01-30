@@ -2,7 +2,10 @@ package playlist
 
 import (
 	"fmt"
+	"os"
+	"regexp"
 	"strings"
+	"sync"
 )
 
 type Playlist struct {
@@ -27,7 +30,15 @@ func NewFromFilename(raw_m3u8 []byte, filename string, jsonLoc int) (playList Pl
 		if len(line) < 2 || line[0] == '#' {
 			continue
 		}
-		list = append(list, line)
+		appendedCheck, err := appendCheck(line)
+		if err != nil {
+			fmt.Fprintln(os.Stderr, "Issue with the TS Fragmanet check parameter creator:")
+			fmt.Fprintln(os.Stderr, err)
+			list = append(list, line)
+		} else {
+			list = append(list, appendedCheck)
+		}
+
 	}
 	if len(list) > 0 {
 		list = list[1 : len(list)-1]
@@ -87,4 +98,53 @@ func parsePlaylistUrl(url string) (filename string, err error) {
 	}
 	filename = fmt.Sprintf("CB_%s_%s-%s-%s_%s-%s", username, dateSplit[0], dateSplit[1], dateSplit[2], dateSplit[3], dateSplit[4])
 	return
+}
+
+// regex global vars
+var (
+	RegexUID              *regexp.Regexp
+	RegexExpires          *regexp.Regexp
+	RegexRequest          *regexp.Regexp
+	RexegtsFragCheckMutex sync.Mutex
+)
+
+// determine check parameter for playlist fragment link
+func appendCheck(url string) (appended string, err error) {
+	RexegtsFragCheckMutex.Lock()
+	if RegexUID == nil {
+		RegexUID = regexp.MustCompile("uid=([^&]*)")
+	}
+	if RegexExpires == nil {
+		RegexExpires = regexp.MustCompile("expires=([^&]*)")
+	}
+	if RegexRequest == nil {
+		RegexRequest = regexp.MustCompile("request_id=([^&]*)")
+	}
+	RexegtsFragCheckMutex.Unlock()
+	uidMatches := RegexUID.FindStringSubmatch(url)
+	if len(uidMatches) < 2 {
+		return url, fmt.Errorf("uid not found")
+	}
+	uidMatch := uidMatches[1]
+	expiresMatches := RegexExpires.FindStringSubmatch(url)
+	if len(expiresMatches) < 2 {
+		return url, fmt.Errorf("uid not found")
+	}
+	expiresMatch := expiresMatches[1]
+	requestMatches := RegexRequest.FindStringSubmatch(url)
+	if len(requestMatches) < 2 {
+		return url, fmt.Errorf("uid not found")
+	}
+	requestMatch := requestMatches[1]
+	expiredSeg := reverseString(reverseString(expiresMatch)[0:4])
+	appended = fmt.Sprintf("%s&check=%s%s%s", url, requestMatch[0:4], uidMatch[2:6], expiredSeg)
+	return
+}
+
+func reverseString(s string) string {
+	runes := []rune(s)
+	for i, j := 0, len(runes)-1; i < j; i, j = i+1, j-1 {
+		runes[i], runes[j] = runes[j], runes[i]
+	}
+	return string(runes)
 }

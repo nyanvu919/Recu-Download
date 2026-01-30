@@ -5,51 +5,85 @@ import (
 	"os"
 	"recurbate/playlist"
 	"recurbate/tools"
+	"regexp"
+	"slices"
+	"strconv"
 	"strings"
+	"sync"
 	"time"
 )
 
-// Takes recurbate video URL and returns playlist raw data and returns file name {ts-urls, filename, "done", error}
-func Parse(siteUrl string, header map[string]string, jsonLoc int) (playList playlist.Playlist, errorType string, err error) {
-	// http request
-	downloadLoop := func(url string, timeout int, header map[string]string) (data []byte, err error) {
-		retry := 0
-		for {
-			var status int
-			data, status, err = tools.Request(url, timeout, header, nil, "GET")
-			if err == nil && status == 200 {
-				break
-			}
-			fmt.Printf("Failed Retrying...\033[18D")
-			if retry > 5 {
-				if err == nil {
-					err = fmt.Errorf("%s, status code: %d", tools.ANSIColor(string(data), 2), status)
-				}
-				return
-			}
-			retry++
-			timeout += 30
-			time.Sleep(time.Millisecond * 200)
-		}
-		return
+// returns token from given recu html
+func regexTokenMatch(html string, videoid string) (string, error) {
+	term := fmt.Sprintf(`%s"[\n\s]*data-token="([^"]*)"`, videoid)
+	regexToken := regexp.MustCompile(term)
+	matches := regexToken.FindStringSubmatch(html)
+	if len(matches) > 1 {
+		return matches[1], nil
 	}
+	return "", fmt.Errorf("video token not found")
+}
+
+var (
+	regexVideoID      *regexp.Regexp
+	regexVideoIDMutex sync.Mutex
+)
+
+// return video ID from given video url
+func regexVideoIDMatch(text string) (string, error) {
+	regexVideoIDMutex.Lock()
+	if regexVideoID == nil {
+		regexVideoID = regexp.MustCompile(`([\d]*)/play`)
+	}
+	regexVideoIDMutex.Unlock()
+	matches := regexVideoID.FindStringSubmatch(text)
+	if len(matches) > 1 {
+		return matches[1], nil
+	}
+	return "", fmt.Errorf("video id match not found")
+}
+
+func parseDownloadLoop(url string, timeout int, header map[string]string) (data []byte, err error) {
+	retry := 0
+	for {
+		var status int
+		data, status, err = tools.Request(url, timeout, header, nil, "GET")
+		if err == nil && status == 200 {
+			break
+		}
+		fmt.Printf("Failed Retrying...\033[18D")
+		if retry > 5 {
+			if err == nil {
+				err = fmt.Errorf("%s, status code: %d", tools.ANSIColor(string(data), 2), status)
+			}
+			return
+		}
+		retry++
+		timeout += 30
+		time.Sleep(time.Millisecond * 200)
+	}
+	return
+}
+
+// Takes recurbate video URL and returns playlist raw data and returns file name {ts-urls, filename, "done", error}
+func Parse(siteUrl string, header map[string]string, jsonLoc, maxRes int) (playList playlist.Playlist, errorType string, err error) {
 	// getting webpage
 	fmt.Printf("\rDownloading HTML: ")
-	htmldata, err := downloadLoop(siteUrl, 10, tools.FormatedHeader(header, "", 1))
+	htmldata, err := parseDownloadLoop(siteUrl, 10, tools.FormatedHeader(header, "", 1))
 	if err != nil {
 		errorType = "cloudflare"
 		return
 	}
 	html := string(htmldata)
 	fmt.Printf("\r\033[2KDownloading HTML: Complete\n")
-	// determine unique page token
-	token, err := tools.SearchString(html, `data-token="`, `"`)
+	// determine video ID
+	id, err := regexVideoIDMatch(siteUrl)
 	if err != nil {
 		errorType = "panic"
 		return
 	}
-	// determine video token
-	id, err := tools.SearchString(html[strings.Index(html, token):], `data-video-id="`, `"`)
+	// determine unique page token
+	token, err := regexTokenMatch(html, id)
 	if err != nil {
 		errorType = "panic"
 		return
@@ -58,7 +92,7 @@ func Parse(siteUrl string, header map[string]string, jsonLoc int) (playList play
 	apiUrl := strings.Join(strings.Split(siteUrl, "/")[:3], "/") + "/api/video/" + id + "?token=" + token
 	// request api
 	fmt.Printf("\rGetting Link to Playlist: ")
-	apidata, err := downloadLoop(apiUrl, 10, tools.FormatedHeader(header, apiUrl, 2))
+	apidata, err := parseDownloadLoop(apiUrl, 10, tools.FormatedHeader(header, siteUrl, 2))
 	if err != nil {
 		errorType = "panic"
 		return
@@ -87,36 +121,23 @@ func Parse(siteUrl string, header map[string]string, jsonLoc int) (playList play
 	playlistUrl = strings.ReplaceAll(playlistUrl, "amp;", "")
 	fmt.Printf("\rDownloading Playlists: ")
 	// get m3u8 playlist
-	playlistData, err := downloadLoop(playlistUrl, 10, tools.FormatedHeader(header, "", 0))
+	playlistData, err := parseDownloadLoop(playlistUrl, 10, tools.FormatedHeader(header, "", 0))
+	if err != nil {
+		errorType = "panic"
+		return
+	}
+	fmt.Printf("\r\033[2KDownloading Playlists: Complete\n")
+	// determine url prefix for playlist entries
+	prefix := playlistUrl[:strings.LastIndex(playlistUrl, "/")+1]
+	// if playlist contains resolution selection
+	playlistData, err = resolution(playlistData, prefix, header, maxRes)
 	if err != nil {
 		errorType = "panic"
 		return
 	}
 	playlistRef := string(playlistData)
-	playlistLines := strings.Split(playlistRef, "\n")
-	fmt.Printf("\r\033[2KDownloading Playlists: Complete\n")
-	// determine url prefix for playlist entries
-	prefix := playlistUrl[:strings.LastIndex(playlistUrl, "/")+1]
-	// if playlist contains resolution selection
-	if strings.Contains(playlistRef, "EXT-X-STREAM-INF") {
-		for i := 0; i < len(playlistLines)-1; i++ {
-			if strings.Contains(playlistLines[i], "NAME=max") {
-				playlistUrl = playlistLines[i+1]
-				if !strings.Contains(playlistUrl, prefix) {
-					playlistUrl = prefix + playlistUrl
-				}
-			}
-		}
-		fmt.Printf("\rDownloading Playlist: ")
-		playlistData, err = downloadLoop(playlistUrl, 10, tools.FormatedHeader(header, "", 0))
-		if err != nil {
-			errorType = "panic"
-			return
-		}
-		playlistLines = strings.Split(string(playlistData), "\n")
-		fmt.Printf("\r\033[2KDownloading Playlist: Complete\n")
-	}
 	// added prefix to playlist
+	playlistLines := strings.Split(playlistRef, "\n")
 	for i, line := range playlistLines {
 		if len(line) < 2 || line[0] == '#' {
 			continue
@@ -130,6 +151,85 @@ func Parse(siteUrl string, header map[string]string, jsonLoc int) (playList play
 		errorType = "panic"
 	}
 	return
+}
+
+// If playlist contains list of resolutions, return the maximum resolution playlist
+func resolution(playlistData []byte, prefix string, header map[string]string, maxRes int) ([]byte, error) {
+	playlistRef := string(playlistData)
+	if strings.Contains(playlistRef, "EXT-X-STREAM-INF") {
+		sortedSet, resolutions := organizeResolutions(playlistRef, prefix)
+		var playlistUrl string
+		for i := len(sortedSet) - 1; i >= 0; i-- {
+			if sortedSet[i] <= maxRes {
+				playlistUrl = resolutions[sortedSet[i]]
+				break
+			}
+		}
+		if playlistUrl == "" {
+			println("The given Max Resolution isn't available, using maximum")
+			playlistUrl = resolutions[6969]
+		}
+		fmt.Printf("\rDownloading Playlist: ")
+		var err error
+		playlistData, err = parseDownloadLoop(playlistUrl, 10, tools.FormatedHeader(header, "", 0))
+		if err != nil {
+			return nil, err
+		}
+		fmt.Printf("\r\033[2KDownloading Playlist: Complete\n")
+	}
+	return playlistData, nil
+}
+
+// collects all resolution playlists, grouped by frame heights
+func organizeResolutions(playlistRef, prefix string) (sortedSet []int, resolutions map[int]string) {
+	playlistLines := strings.Split(playlistRef, "\n")
+	resolutions = make(map[int]string)
+	for i := 0; i < len(playlistLines)-1; i++ {
+		if len(playlistLines[i]) >= 1 && playlistLines[i][0] == '#' {
+			if resolutions[6969] == "" && strings.Contains(playlistLines[i], "NAME=max") {
+				playlistUrl := playlistLines[i+1]
+				if !strings.Contains(playlistUrl, prefix) {
+					playlistUrl = prefix + playlistUrl
+				}
+				resolutions[6969] = playlistUrl
+			}
+			res, err := regexResolutionMatch(playlistLines[i])
+			if err != nil {
+				continue
+			}
+			playlistUrl := playlistLines[i+1]
+			if !strings.Contains(playlistUrl, prefix) {
+				playlistUrl = prefix + playlistUrl
+			}
+			resolutions[res] = playlistUrl
+		}
+	}
+	sortedSet = make([]int, len(resolutions))
+	for i := range resolutions {
+		sortedSet = append(sortedSet, i)
+	}
+	slices.Sort(sortedSet)
+	return
+}
+
+var (
+	regexResolution      *regexp.Regexp
+	regexResolutionMutex sync.Mutex
+)
+
+// returns the frame height of the given playlist string
+func regexResolutionMatch(text string) (int, error) {
+	regexResolutionMutex.Lock()
+	if regexResolution == nil {
+		regexResolution = regexp.MustCompile(`#EXT-X-STREAM-INF:[\w=,]*?RESOLUTION=[\d]+x([\d]+)`)
+	}
+	regexResolutionMutex.Unlock()
+	matches := regexResolution.FindStringSubmatch(text)
+	if len(matches) > 1 {
+		i, err := strconv.Atoi(matches[1])
+		return i, err
+	}
+	return 0, fmt.Errorf("no match found")
 }
 
 // Muxes the transport streams and saves it to a file
@@ -180,7 +280,7 @@ func Mux(playList playlist.Playlist, header map[string]string, startIndex int, d
 	}
 	defer file.Close()
 	// muxing loop //
-	if startIndex == 0  {
+	if startIndex == 0 {
 		startIndex = int(float64(playList.Len()) * durationPercent[0] / 100)
 	}
 	endIndex := int(float64(playList.Len()) * durationPercent[1] / 100)
@@ -191,7 +291,7 @@ func Mux(playList playlist.Playlist, header map[string]string, startIndex int, d
 			return i, fmt.Errorf("aborting")
 		}
 		startTime := time.Now()
-		err := downloadLoop(&data, tsLink, header, 10, 5)
+		err := muxDownloadLoop(&data, tsLink, header, 10, 5)
 		if err != nil {
 			fmt.Println()
 			err = fmt.Errorf("error: %v\nFailed at %.2f%%", tools.ANSIColor(err, 2), float32(i)/float32(playList.Len())*100)
@@ -216,7 +316,7 @@ func Mux(playList playlist.Playlist, header map[string]string, startIndex int, d
 }
 
 // download retry loop for Mux()
-func downloadLoop(data *[]byte, url string, header map[string]string, timeout, maxRetry int) (err error) {
+func muxDownloadLoop(data *[]byte, url string, header map[string]string, timeout, maxRetry int) (err error) {
 	retry := 0
 	for {
 		var status int

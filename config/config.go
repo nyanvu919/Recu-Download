@@ -7,6 +7,7 @@ import (
 	"recurbate/playlist"
 	"recurbate/recu"
 	"recurbate/tools"
+	"strconv"
 	"strings"
 	"sync"
 )
@@ -18,8 +19,9 @@ var (
 
 // Defines the JSON used
 type Config struct {
-	Urls   []any             `json:"urls"`
-	Header map[string]string `json:"header"`
+	Urls    []any             `json:"urls"`
+	Header  map[string]string `json:"header"`
+	Options map[string]string `json:"options"`
 }
 
 // Gets Playlist
@@ -31,7 +33,7 @@ func (config Config) GetPlaylist(urlAny any, jsonLoc int) (playList playlist.Pla
 	if complete {
 		return
 	}
-	playList, status, err := recu.Parse(url, config.Header, jsonLoc)
+	playList, status, err := recu.Parse(url, config.Header, jsonLoc, config.parseMaxRes())
 	switch status {
 	case "cloudflare":
 		fmt.Fprintf(os.Stderr, "%s\nCloudflare Blocked: Failed on url: %v\n", err.Error(), url)
@@ -43,6 +45,16 @@ func (config Config) GetPlaylist(urlAny any, jsonLoc int) (playList playlist.Pla
 		fmt.Fprintf(os.Stderr, "Error: %s\nFailed on url: %v\n", err.Error(), url)
 	}
 	return
+}
+
+// parse maximum resolution from json to an integer
+func (config Config) parseMaxRes() int {
+	maxResString := config.Options["Maximum Resolution (Height)"]
+	i, err := strconv.Atoi(maxResString)
+	if err != nil {
+		i = 6969
+	}
+	return i
 }
 
 // Saves video to working directory
@@ -154,6 +166,9 @@ func Default() Config {
 		"User-Agent": "",
 	}
 	jsonTemplet.Urls = []any{""}
+	jsonTemplet.Options = map[string]string{
+		"Maximum Resolution (Height)": "",
+	}
 	return jsonTemplet
 }
 
@@ -161,13 +176,7 @@ func Default() Config {
 func (config *Config) Save() (err error) {
 	mtx.Lock()
 	var jsonData []byte
-	jsonData, err = json.MarshalIndent(struct {
-		Urls   []any             `json:"urls"`
-		Header map[string]string `json:"header"`
-	}{
-		Urls:   config.Urls,
-		Header: config.Header,
-	}, "", "\t")
+	jsonData, err = json.MarshalIndent(config, "", "\t")
 	if err != nil {
 		return fmt.Errorf("error: Parsing Json%v", err)
 	}
