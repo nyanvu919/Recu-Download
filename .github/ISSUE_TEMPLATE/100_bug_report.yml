@@ -51,7 +51,7 @@ body:
     validations:
       required: true
   - type: input
-    id: os specifics
+    id: os-specifics
     attributes:
       label: Operating System
       description: Include version if possible
