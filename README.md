@@ -1,42 +1,125 @@
-Use `.\recu-windows-amd64.exe --help` for more information
+# Recu-Download
 
-Run with `.\recu-windows-amd64.exe`
+Tool Go để tải video từ các URL `.../play` (hỗ trợ tải song song, tuần tự, hybrid, hoặc tải từ file `.m3u8`).
 
-First run will generate `config.json`, fill in urls to download and Cookie and User-Agent with header info using the network DevTools in Chrome
-```Json
+## 1) Build / chạy nhanh
+
+```bash
+go build -o recu .
+./recu
+```
+
+Lần chạy đầu sẽ tự tạo `config.json`.
+
+---
+
+## 2) Cấu hình tối thiểu để tải (đơn giản nhất)
+
+Chỉ cần điền **3 thứ bắt buộc** trong `config.json`:
+
+- `urls`: link video dạng `https://.../video/.../play`
+- `header.Cookie`
+- `header.User-Agent`
+
+Ví dụ tối thiểu:
+
+```json
 {
-	"urls": [
-		""
-	],
-	"header": {
-		"Cookie": "",
-		"User-Agent": ""
-	}
+  "urls": [
+    "https://recu.me/ten-user/video/xxxx/play"
+  ],
+  "header": {
+    "Cookie": "...",
+    "User-Agent": "..."
+  },
+  "options": {
+    "Maximum Resolution (Height)": ""
+  }
 }
 ```
 
-Usage: `recurbate <json location> playlist/series <playlist.m3u8>`
+> `options` có thể để trống như trên.
 
-`<json location>` is the location of the json
+---
 
-specifying `playlist` will cause the program to download only the .m3u8 file
+## 3) Cách tải dễ nhất
 
-specifying `series` will cause the program to download the videos serially instead of in parallel
+Sau khi điền xong `config.json`, chỉ cần chạy:
 
-specifying `playlist <playlist.m3u8>` will read the playlist from the location specified from `<playlist.m3u8>` and download that video
-### Advanced Usage for v1.11.0
-To specify a specific part of a video to download
-
-example:
-```JSON
-{
-	"urls": [
-		["https://recu.me/video/xxxxxxx/play","55:00","1:10:00","1:30:00"]
-	],
-	"header": {
-		"Cookie": "",
-		"User-Agent": ""
-	}
-}
+```bash
+./recu
 ```
-Where you specify the start, end and total length of the video
+
+Mặc định chương trình tải **song song** các URL trong `urls`.
+
+---
+
+## 4) Các chế độ chạy
+
+```bash
+./recu [duong_dan_json] [playlist|series|hybrid|parse] [tham_so_them]
+```
+
+- Không truyền gì: tải song song từ `config.json`
+- `series`: tải tuần tự từng video
+- `hybrid`: tuần tự theo từng server, nhưng nhiều server tải song song
+- `playlist`: chỉ tải file `.m3u8`
+- `playlist <file.m3u8>`: tải nội dung video từ file `.m3u8` có sẵn
+- `parse <url-trang-html>`: quét HTML để thêm URL video vào `urls`
+
+Ví dụ:
+
+```bash
+./recu config.json series
+./recu config.json playlist
+./recu config.json playlist ./abc.m3u8
+./recu config.json hybrid
+./recu config.json parse https://recu.me/ten-user/videos
+```
+
+---
+
+## 5) Resume / đánh dấu hoàn thành (tự động)
+
+Sau mỗi lần tải, chương trình tự cập nhật `urls` trong JSON:
+
+- `"COMPLETE"` nếu video đã xong
+- hoặc lưu chỉ số segment cuối để resume khi chạy lại
+
+Bạn chỉ cần chạy lại lệnh cũ để tiếp tục.
+
+---
+
+## 6) Tải một đoạn video (tuỳ chọn nâng cao)
+
+Phần tử trong `urls` có thể là mảng:
+
+```json
+[
+  "https://recu.me/.../play",
+  "55:00",
+  "1:10:00",
+  "1:30:00"
+]
+```
+
+Ý nghĩa: `start`, `end`, `total length`.
+
+---
+
+## 7) Mẹo lấy Cookie/User-Agent
+
+Mở DevTools trình duyệt (Network) khi đã đăng nhập trang, lấy từ request video/page:
+
+- `Cookie`
+- `User-Agent`
+
+Dán vào `config.json` rồi chạy `./recu`.
+
+---
+
+## 8) Trợ giúp
+
+```bash
+./recu --help
+```
