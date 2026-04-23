@@ -9,7 +9,9 @@ go build -o recu .
 ./recu
 ```
 
-Lần chạy đầu sẽ tự tạo `config.json`.
+Lần chạy đầu sẽ tự tạo `config.json` **ở thư mục hiện tại (working directory nơi bạn chạy lệnh `./recu`)**.
+
+> Repo không kèm sẵn file `config.json`; file này được tạo khi chạy chương trình lần đầu.
 
 ---
 
