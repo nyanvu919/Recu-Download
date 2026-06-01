@@ -125,3 +125,15 @@ Dán vào `config.json` rồi chạy `./recu`.
 ```bash
 ./recu --help
 ```
+
+---
+
+## 9) Ghi chú khi chạy backend API trong GitHub Codespaces
+
+Nếu bạn chạy một backend Express/Node trong Codespaces và mở port backend nhưng thấy:
+
+```json
+{"status":"fail","code":"NOT_FOUND","message":"Route not found: GET /"}
+```
+
+thì backend vẫn có thể đang chạy bình thường; lỗi này thường chỉ có nghĩa là route `GET /` chưa được khai báo. Xem hướng dẫn xử lý chi tiết tại [`docs/codespaces-backend-404.md`](docs/codespaces-backend-404.md).
